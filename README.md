@@ -18,7 +18,7 @@ pip install -r requirements.txt
 ## Run the script:
 
 ```bash
-python etf_data_fetcher.py
+python main.py
 ```
 
 ## Explore the results:
