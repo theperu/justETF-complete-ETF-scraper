@@ -49,6 +49,23 @@ def create_hashmap_by_key(etf_data: List[Dict[str, str]], key: str) -> Dict[str,
     isin_hashmap = {element[key]: element for element in etf_data}
     return isin_hashmap
 
+def print_etf_info(hashmap: Dict[str, Dict[str, str]], key: str):
+    selected_etf = hashmap.get(key)
+    print(
+        f'''
+        \nETF Information:
+        
+        - Name: {selected_etf["name"]}
+        - ISIN: {selected_etf["isin"]}
+        - Ticker: {selected_etf["ticker"]}
+        - Distribution Policy: {selected_etf["distributionPolicy"]}
+        - TER: {selected_etf["ter"]}
+        - Found Currency: {selected_etf["fundCurrency"]}
+        - Inception Date: {selected_etf["inceptionDate"]}
+        - 1 Year Returns: {selected_etf["yearReturn1CUR"]}
+        - Found Size: {selected_etf["fundSize"]} mln
+        - Current Dividend Yield: {selected_etf["currentDividendYield"]}
+        ''')
 if __name__ == "__main__":
     result = make_request()
 
@@ -72,23 +89,13 @@ if __name__ == "__main__":
             user_isin = input("Enter an ISIN to retrieve information: ")
             selected_etf = isin_map.get(user_isin)
             if selected_etf:
-                print("\nETF Information:")
-                for key, value in selected_etf.items():
-                    if value == "-":
-                        print(f"{key}: NO DATA")
-                    else:
-                        print(f"{key}: {value}")
+                print_etf_info(isin_map, user_isin)
             else:
                 print(f"\nETF with ISIN {user_isin} not found.")
         elif choice == "2":
             user_ticker = input("Enter a Ticker to retrieve information: ")
             selected_etf = ticker_map.get(user_ticker)
             if selected_etf:
-                print("\nETF Information:")
-                for key, value in selected_etf.items():
-                    if value == "-":
-                        print(f"{key}: NO DATA")
-                    else:
-                        print(f"{key}: {value}")
+                print_etf_info(ticker_map, user_ticker)
             else:
                 print(f"\nETF with ISIN {user_isin} not found.")
