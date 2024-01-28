@@ -1,4 +1,5 @@
 from typing import Dict, List, Literal, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -32,7 +33,8 @@ def build_query(instrument: Optional[InstrumentType] = None) -> str:
 
 def make_request(instrument: Optional[InstrumentType] = None) -> List[Dict[str, str]]:
     query = build_query(instrument)
-    print(query)
+    print(instrument)
+    print("Query: " + str(query))
     response = requests.post(
         HIDDEN_URL,
         {
@@ -49,7 +51,7 @@ def create_hashmap_by_key(etf_data: List[Dict[str, str]], key: str) -> Dict[str,
     isin_hashmap = {element[key]: element for element in etf_data}
     return isin_hashmap
 
-def print_etf_info(hashmap: Dict[str, Dict[str, str]], key: str):
+def print_etf_info(hashmap: Dict[str, Dict[str, str]], key: str) -> Dict[str, str]:
     selected_etf = hashmap.get(key)
     print(
         f'''
@@ -66,6 +68,48 @@ def print_etf_info(hashmap: Dict[str, Dict[str, str]], key: str):
         - Found Size: {selected_etf["fundSize"]} mln
         - Current Dividend Yield: {selected_etf["currentDividendYield"]}
         ''')
+    return selected_etf
+    
+def find_similar_etfs(etf: Dict[str, str]):
+    url_encoded_index = etf["groupValue"]
+    response = requests.post(
+        HIDDEN_URL,
+        {
+            **BASE_PARAMS,
+            "etfsParams": f"groupField=index&index={url_encoded_index}",
+        },
+    )
+    assert response.status_code == requests.codes.ok
+    etf_list = response.json()["data"]
+    sorted_etf_list = sorted(etf_list, key=lambda x: x.get('fundSize', 0))
+    sorted_etf_list = [item for item in sorted_etf_list if item.get('ticker') != etf["ticker"]]
+    if len(sorted_etf_list) > 5:
+        sorted_etf_list = sorted_etf_list[:5]
+    elif len(sorted_etf_list) == 0:
+        print(f"There aren't other ETFs with the index: {etf['groupValue']}")
+        return sorted_etf_list
+
+    print("Here are other ETFs with the same index: \n")
+    for selected_etf in sorted_etf_list:
+        print(
+        f'''
+        \nETF Information:
+        
+        - Name: {selected_etf["name"]}
+        - ISIN: {selected_etf["isin"]}
+        - Ticker: {selected_etf["ticker"]}
+        - Distribution Policy: {selected_etf["distributionPolicy"]}
+        - TER: {selected_etf["ter"]}
+        - Found Currency: {selected_etf["fundCurrency"]}
+        - Inception Date: {selected_etf["inceptionDate"]}
+        - 1 Year Returns: {selected_etf["yearReturn1CUR"]}
+        - Found Size: {selected_etf["fundSize"]} mln
+        - Current Dividend Yield: {selected_etf["currentDividendYield"]}
+        ''')
+    return etf_list
+    
+
+
 if __name__ == "__main__":
     result = make_request()
 
@@ -89,13 +133,15 @@ if __name__ == "__main__":
             user_isin = input("Enter an ISIN to retrieve information: ")
             selected_etf = isin_map.get(user_isin)
             if selected_etf:
-                print_etf_info(isin_map, user_isin)
+                etf = print_etf_info(isin_map, user_isin)
+                find_similar_etfs(etf)
             else:
                 print(f"\nETF with ISIN {user_isin} not found.")
         elif choice == "2":
             user_ticker = input("Enter a Ticker to retrieve information: ")
             selected_etf = ticker_map.get(user_ticker)
             if selected_etf:
-                print_etf_info(ticker_map, user_ticker)
+                etf = print_etf_info(ticker_map, user_ticker)
+                find_similar_etfs(etf)
             else:
                 print(f"\nETF with ISIN {user_isin} not found.")
