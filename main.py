@@ -1,112 +1,117 @@
+import re
 from typing import Dict, List, Literal, Optional
+from bs4 import BeautifulSoup
 from urllib.parse import quote
+import urllib.parse
+import warnings
 
 import requests
-
 import json
 
-HIDDEN_URL = "https://www.justetf.com/servlet/etfs-table"
-BASE_PARAMS = {
-    "draw": 1,
-    "start": 0,
-    "length": -1,
-    "lang": "en",
-    "country": "IT",
-    "universeType": "private",
-}
+BASE_URL = "https://www.justetf.com/en/search.html"
+BASE_DATA = {"draw": 1, "start": 0, "length": -1}
+PATTERN = re.compile(
+    r"(\d)-1.0-container-tabsContentContainer-tabsContentRepeater-1-container-content-etfsTablePanel&search=ETFS&_wicket=1"
+)
 
-InstrumentType = Optional[Literal["ETC", "ETF", "ETN"]]
+def make_request(index: Optional[str] = None) -> List[Dict[str, str]]:
+    with requests.Session() as session:
+        html_response = session.get(f"{BASE_URL}?search=ETFS&index=Algorand")
+        if not index:
+            build_indexes_list(html_response)
 
-INSTRUMENTS: Dict[InstrumentType, str] = {
-    "ETC": "ETC",
-    "ETF": "ETF",
-    "ETN": "ETN",
-}
+        if match := PATTERN.search(html_response.text):
+            counter = int(match.group(1))
+        else:
+            warnings.warn("Cannot parse dynamic counter from HTML page, assuming 0.")
+            counter = 0
 
+        url = f"{BASE_URL}?{counter}-1.0-container-tabsContentContainer-tabsContentRepeater-1-container-content-etfsTablePanel&search=ETFS&_wicket=1"
+        payload = {
+            **BASE_DATA,
+            "lang": 'en',
+            "country": 'DE',
+            "universeType": 'private',
+            "defaultCurrency": 'EUR',
+        }
 
-def build_query(instrument: Optional[InstrumentType] = None) -> str:
-    params = "groupField=index&productGroup=epg-longOnly"  # Default strategy
-    if instrument is not None:
-        params += f"&instrumentType={instrument}"
-    return params
+        if index:
+            payload["etfsParams"] = f'search=ETFS&index={index}&query='
+        response = session.post(url, payload)
 
-
-def make_request(instrument: Optional[InstrumentType] = None) -> List[Dict[str, str]]:
-    query = build_query(instrument)
-    print(instrument)
-    print("Query: " + str(query))
-    response = requests.post(
-        HIDDEN_URL,
-        {
-            **BASE_PARAMS,
-            "etfsParams": query,
-        },
-    )
-    assert response.status_code == requests.codes.ok
-    data = response.json()["data"]
-    return data
+    assert response.status_code == requests.codes.ok, f"Request failed with status {response.status_code}"
+    return response.json().get("data", [])
 
 
 def create_hashmap_by_key(etf_data: List[Dict[str, str]], key: str) -> Dict[str, Dict[str, str]]:
     isin_hashmap = {element[key]: element for element in etf_data}
     return isin_hashmap
 
-def print_etf_info(hashmap: Dict[str, Dict[str, str]], key: str) -> Dict[str, str]:
-    selected_etf = hashmap.get(key)
-    print(
-        f'''
-        \nETF Information:
-        
-        - Name: {selected_etf["name"]}
-        - ISIN: {selected_etf["isin"]}
-        - Ticker: {selected_etf["ticker"]}
-        - Distribution Policy: {selected_etf["distributionPolicy"]}
-        - TER: {selected_etf["ter"]}
-        - Found Currency: {selected_etf["fundCurrency"]}
-        - Inception Date: {selected_etf["inceptionDate"]}
-        - 1 Year Returns: {selected_etf["yearReturn1CUR"]}
-        - Found Size: {selected_etf["fundSize"]} mln
-        - Current Dividend Yield: {selected_etf["currentDividendYield"]}
-        ''')
-    return selected_etf
-    
-def find_similar_etfs(etf: Dict[str, str]):
-    url_encoded_index = etf["groupValue"]
-    response = requests.post(
-        HIDDEN_URL,
-        {
-            **BASE_PARAMS,
-            "etfsParams": f"groupField=index&index={url_encoded_index}",
-        },
-    )
-    assert response.status_code == requests.codes.ok
-    etf_list = response.json()["data"]
-    sorted_etf_list = sorted(etf_list, key=lambda x: x.get('fundSize', 0))
-    sorted_etf_list = [item for item in sorted_etf_list if item.get('ticker') != etf["ticker"]]
-    if len(sorted_etf_list) > 5:
-        sorted_etf_list = sorted_etf_list[:5]
-    elif len(sorted_etf_list) == 0:
-        print(f"There aren't other ETFs with the index: {etf['groupValue']}")
-        return sorted_etf_list
+def build_indexes_list(html_response: requests.Response):
+    soup = BeautifulSoup(html_response.text, "html.parser")
+    options = soup.find_all("option")
 
-    print("Here are other ETFs with the same index: \n")
-    for selected_etf in sorted_etf_list:
+    options_dict = {int(option["value"]): option.text.strip() for option in options if option.has_attr("value") and option["value"].isdigit()}
+
+    with open("indexes.json", "w") as file:
+        json.dump(options_dict, file, indent=4)
+
+def get_etf_index(etf: Dict[str, str] | None) -> str | None:
+    if etf:
+        with requests.Session() as session:
+            html_response = session.get(f"https://www.justetf.com/en/etf-profile.html?isin={etf["isin"]}")
+
+            with open("response.txt", "w", encoding="utf-8") as f:
+                f.write(html_response.text)
+
+            soup_table = BeautifulSoup(html_response.text, "html.parser")
+
+            index_td = soup_table.find("td", string=" Index ")
+            print(f"Found element: {index_td.text}")
+            if index_td:
+                index_name_td = index_td.find_next_sibling("td")
+                if index_name_td:
+                    index_name = index_name_td.get_text(strip=True)
+                    print(f"\nYour ETF tracks the index: {index_name}")
+                    return index_name
+    return None
+
+
+def print_etf_info(etf: Dict[str, str] | None):
+    if etf:
         print(
-        f'''
-        \nETF Information:
+            f'''
+            \nETF Information:
+            
+            - Name: {etf["name"]}
+            - ISIN: {etf["isin"]}
+            - Ticker: {etf["ticker"]}
+            - Distribution Policy: {etf["distributionPolicy"]}
+            - TER: {etf["ter"]}
+            - Found Currency: {etf["fundCurrency"]}
+            - Inception Date: {etf["inceptionDate"]}
+            - 1 Year Returns: {etf["yearReturn1CUR"]}
+            - Found Size: {etf["fundSize"]} mln
+            - Current Dividend Yield: {etf["currentDividendYield"]}
+            ''')
+
+    
+def find_similar_etfs(index: str | None, etf: str):
+    if index:
+        # Convert index string for search
+        encoded_index = urllib.parse.quote(index, safe='')
+
+        # Get ETF with same index
+        data = make_request(index=encoded_index)
         
-        - Name: {selected_etf["name"]}
-        - ISIN: {selected_etf["isin"]}
-        - Ticker: {selected_etf["ticker"]}
-        - Distribution Policy: {selected_etf["distributionPolicy"]}
-        - TER: {selected_etf["ter"]}
-        - Found Currency: {selected_etf["fundCurrency"]}
-        - Inception Date: {selected_etf["inceptionDate"]}
-        - 1 Year Returns: {selected_etf["yearReturn1CUR"]}
-        - Found Size: {selected_etf["fundSize"]} mln
-        - Current Dividend Yield: {selected_etf["currentDividendYield"]}
-        ''')
-    return etf_list
+        # Filter the first 5 by size and return results
+        filtered_data = [item for item in data if item.get("isin") != etf["isin"]]
+        if filtered_data:
+            print(f"\n\nHere are some similar etfs to the index: {index}\n")
+            for etf in filtered_data[:5]:
+                print_etf_info(etf)
+        return
+    print(f"There aren't other ETFs with the index: {index}")
     
 
 
@@ -133,15 +138,17 @@ if __name__ == "__main__":
             user_isin = input("Enter an ISIN to retrieve information: ")
             selected_etf = isin_map.get(user_isin)
             if selected_etf:
-                etf = print_etf_info(isin_map, user_isin)
-                find_similar_etfs(etf)
+                print_etf_info(selected_etf)
+                index = get_etf_index(selected_etf)
+                find_similar_etfs(index, selected_etf)
             else:
                 print(f"\nETF with ISIN {user_isin} not found.")
         elif choice == "2":
             user_ticker = input("Enter a Ticker to retrieve information: ")
             selected_etf = ticker_map.get(user_ticker)
             if selected_etf:
-                etf = print_etf_info(ticker_map, user_ticker)
-                find_similar_etfs(etf)
+                print_etf_info(selected_etf)
+                index = get_etf_index(selected_etf)
+                find_similar_etfs(index, selected_etf)
             else:
                 print(f"\nETF with ISIN {user_isin} not found.")
